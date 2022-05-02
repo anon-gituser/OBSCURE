@@ -1,0 +1,383 @@
+static unsigned int FieldMult(unsigned int a, unsigned int b)
+{
+  static const unsigned int ReductionPoly = 0x3;
+  static const unsigned int WORDFILTER = 15;
+  unsigned int x = a, ret = 0;
+  unsigned int i, c, A, B;
+  for (i = 0; i < 4; i++)
+  {
+    c = (b >> i) & 1;
+    A = ret ^ x;
+    B = ret;
+    ret = c * A + (1 - c) * B;
+    c = (x >> (4 - 1)) & 1;
+    A = ((x << 1) & 0xff) ^ ReductionPoly;
+    B = ((x << 1) & 0xff);
+    x = c * A + (1 - c) * B;
+  }
+  return ret & WORDFILTER;
+}
+static void SubCell(unsigned int state[8])
+{
+  unsigned int i, j;
+  unsigned int X, Y;
+  unsigned int X3, X2, X1, X0;
+  unsigned int Y3, Y2, Y1, Y0;
+  unsigned int T1, T2, T3, T4, T5, T6, T7, T8, T9;
+  for (i = 0; i < 8; i++){
+    for (j = 0; j < 8; j++){
+      X = (state[i] >> ((8 -1-j) * 4)) & 0xf;
+      X0 = X & 0x1;
+      X1 = (X >> 1) & 0x1;
+      X2 = (X >> 2) & 0x1;
+      X3 = (X >> 3) & 0x1;
+      T1 = X1 ^ X2;
+      T2 = X2 & T1;
+      T3 = X3 ^ T2;
+      Y0 = X0 ^ T3;
+      T4 = T1 & T3;
+      T5 = T1 ^ Y0;
+      T6 = T4 ^ X2;
+      T7 = X0 | T6;
+      Y1 = T5 ^ T7;
+      T8 = T6 ^ ((~X0) & 0x1);
+      Y3 = Y1 ^ T8;
+      T9 = T8 | T5;
+      Y2 = T3 ^ T9;
+      Y = (Y3 << 3) | (Y2 << 2) | (Y1 << 1) | Y0;
+      state[i] &= ~(0xf << ((8 -1-j) * 4));
+      state[i] ^= (Y << (8 -1-j) * 4);
+    }
+  }
+}
+static void ShiftRow(unsigned int state[8])
+{
+  unsigned int i;
+  unsigned int tmp;
+  for (i = 1; i < 8; i++)
+  {
+    tmp = ~(0xffffffff >> (i * 4));
+    tmp &= state[i];
+    tmp >>= (8 -i) * 4;
+    state[i] <<= (i * 4);
+    state[i] ^= tmp;
+  }
+}
+static void MixColumn(unsigned int state[8])
+{
+  static const unsigned int MixColMatrix[8] = {
+    606808150,
+    3381491538,
+    1155372249,
+    374459902,
+    4238206445,
+    2657045654,
+    3257544990,
+    4057618979};
+  unsigned int i, j, k;
+  unsigned int tmp[8], sum;
+  unsigned int t0, t1, t2;
+  for (j = 0; j < 8; j++)
+  {
+    for (i = 0; i < 8; i++)
+    {
+      sum = 0;
+      for (k = 0; k < 8; k++)
+      {
+        t0 = (MixColMatrix[i] >> ((8 - 1 - k) * 4)) & 0xf;
+        t1 = (state[k] >> ((8 - 1 - j) * 4)) & 0xf;
+        t2 = FieldMult(t0, t1);
+        sum ^= t2;
+        sum &= 0xff;
+      }
+      tmp[i] = sum;
+    }
+    for (i = 0; i < 8; i++){
+      state[i] &= ~(0xf << ((8 - 1 - j) * 4));
+      state[i] ^= tmp[i] << ((8 - 1 - j) * 4);
+    }
+  }
+}
+static void Permutation(unsigned int state[8])
+{
+  const unsigned int RC[12] = {
+    270987225, 839175675, 1983941055, 4023980070, 3706331925, 3129754995,
+    1733400750, 3455791620, 2561566545, 588635370, 1415752605, 2879214690
+  };
+  unsigned int i, j;
+  unsigned int tmp;
+  for (i = 0; i < 12; i++)
+  {
+    for (j = 0; j < 8; j++){
+      tmp = (RC[i] >> ((8 - 1 - j) * 4)) & 0xf;
+      tmp <<= 28;
+      state[j] ^= tmp;
+    }
+    SubCell(state);
+    ShiftRow(state);
+    MixColumn(state);
+  }
+}
+static void swap_innerbytes(unsigned int State[8])
+{
+  unsigned int i, j;
+  unsigned int t1, t2, m;
+  for (i = 0; i < 8; i++){
+    for (j = 0; j < 4; j++){
+      t1 = (State[i] >> ((8-j*2-1)*4)) & 0xf;
+      t2 = (State[i] >> ((8-j*2-2)*4)) & 0xf;
+      t2 <<= ((8-j*2-1)*4);
+      t1 <<= ((8-j*2-2)*4);
+      m = ~(0xff << ((4-1-j)*8));
+      State[i] &= m;
+      State[i] ^= t2;
+      State[i] ^= t1;
+    }
+  }
+}
+static void PHOTON_Permutation(unsigned int State_in[8])
+{
+  swap_innerbytes(State_in);
+  Permutation(State_in);
+  swap_innerbytes(State_in);
+}
+static void XOR(
+    unsigned int *out,
+    const unsigned int *in_left,
+    const unsigned int *in_right,
+    const unsigned int iolen_inu32)
+{
+  unsigned int i;
+  for (i = 0; i < iolen_inu32; i++)
+    out[i] = in_left[i] ^ in_right[i];
+}
+static void XOR_const(
+          unsigned int State_inout[8],
+    const unsigned int Constant)
+{
+  unsigned int t = (Constant << (256 - (32 - 1) * 8 - 3)) & 0xff;
+  State_inout[8 - 1] ^= t;
+}
+static void ROTR1(
+          unsigned int *out,
+    const unsigned int *in,
+    const unsigned int iolen_inu32)
+{
+  unsigned int i, i0, i1, i2;
+  unsigned int t, t1, t2;
+  unsigned int iolen_inbytes = iolen_inu32 * 4;
+  for (i = 0; i < iolen_inu32; i++) out[i] = 0;
+  for (i = 0; i < iolen_inbytes; i++){
+    i0 = i;
+    i1 = i0 / 4;
+    i2 = i0 % 4;
+    t1 = (in[i1] >> ((4-1-i2) * 8)) & 0xff;
+    t1 >>= 1;
+    i0 = (i + 1) % iolen_inbytes;
+    i1 = i0 / 4;
+    i2 = i0 % 4;
+    t2 = (in[i1] >> ((4-1-i2) * 8)) & 0xff;
+    t2 = (t2 & 1) << 7;
+    t = t1 | t2;
+    i1 = i / 4;
+    i2 = i % 4;
+    out[i1] |= (t << ((4-1-i2) * 8));
+  }
+}
+static void ShuffleXOR(
+          unsigned int *DataBlock_out,
+    const unsigned int OuterState_in[8],
+    const unsigned int *DataBlock_in,
+    const unsigned int DBlen_inu32)
+{
+  unsigned int i;
+  unsigned int OuterState_part1[4 / 2];
+  unsigned int OuterState_part2[4 / 2];
+  unsigned int OuterState_part1_ROTR1[4 / 2];
+  for (i = 0; i < 4 / 2; i++){
+    OuterState_part1[i] = OuterState_in[i];
+    OuterState_part2[i] = OuterState_in[i + 4 / 2];
+    OuterState_part1_ROTR1[i] = 0;
+  }
+  ROTR1(OuterState_part1_ROTR1, OuterState_part1, 4 / 2);
+  for (i = 0; i < 4/2; i++)
+  {
+    DataBlock_out[i] = OuterState_part2[i] ^ DataBlock_in[i];
+  }
+  for (i = i; i < DBlen_inu32; i++)
+  {
+    DataBlock_out[i] = OuterState_part1_ROTR1[i - 4 / 2] ^ DataBlock_in[i];
+  }
+}
+static void rhoohrENC(
+          unsigned int OuterState_inout[8],
+          unsigned int DataBlock_out[4],
+    const unsigned int DataBlock_in[4],
+    const unsigned int DBlen_inu32)
+{
+  ShuffleXOR(DataBlock_out, OuterState_inout, DataBlock_in, DBlen_inu32);
+  XOR(OuterState_inout, OuterState_inout, DataBlock_in, DBlen_inu32);
+}
+static void rhoohrDEC(
+          unsigned int OuterState_inout[8],
+          unsigned int DataBlock_out[4],
+    const unsigned int DataBlock_in[4],
+    const unsigned int DBlen_inu32)
+{
+  ShuffleXOR(DataBlock_out, OuterState_inout, DataBlock_in, DBlen_inu32);
+  XOR(OuterState_inout, OuterState_inout, DataBlock_out, DBlen_inu32);
+}
+static void HASH(
+    unsigned int State[8],
+    const unsigned int *Data_in,
+    const unsigned int Dlen_inu32,
+    const unsigned int Constant)
+{
+  unsigned int Dlen_inblocks = (Dlen_inu32 + 4 - 1) / 4;
+  unsigned int i = 0, j;
+  unsigned int t[4];
+  for (i = 0; i < Dlen_inblocks - 1; i++)
+  {
+    PHOTON_Permutation(State);
+    for (j = 0; j < 4; j++) {
+      t[j] = Data_in[i * 4 + j];
+    }
+    XOR(State, State, t, 4);
+  }
+  PHOTON_Permutation(State);
+  for (j = 0; j < 4; j++) {
+    t[j] = Data_in[i * 4 + j];
+  }
+  XOR(State, State, t, 4);
+  XOR_const(State, Constant);
+}
+static void ENC(
+          unsigned int State[8],
+          unsigned int *Data_out,
+    const unsigned int *Data_in,
+    const unsigned int Dlen_inu32,
+    const unsigned int Constant)
+{
+  unsigned int i = 0, j;
+  unsigned int Dlen_inblocks = (Dlen_inu32 + 4 - 1) / 4;
+  unsigned int t_out[4], t_in[4];
+  for (i = 0; i < Dlen_inblocks - 1; i++)
+  {
+    PHOTON_Permutation(State);
+    for (j = 0; j < 4; j++)
+    {
+      t_in[j] = Data_in[i * 4 + j];
+    }
+    rhoohrENC(State, t_out, t_in, 4);
+    for (j = 0; j < 4; j++)
+    {
+      Data_out[j] = t_out[i * 4 + j];
+    }
+  }
+  PHOTON_Permutation(State);
+  for (j = 0; j < 4; j++)
+  {
+    t_in[j] = Data_in[i * 4 + j];
+  }
+  rhoohrENC(State, t_out, t_in, 4);
+  for (j = 0; j < 4; j++)
+  {
+    Data_out[j] = t_out[i * 4 + j];
+  }
+  XOR_const(State, Constant);
+}
+static void DEC(
+          unsigned int State[8],
+          unsigned int *Data_out,
+    const unsigned int *Data_in,
+    const unsigned int Dlen_inu32,
+    const unsigned int Constant)
+{
+  unsigned int Dlen_inblocks = (Dlen_inu32 + 4 - 1) / 4;
+  unsigned int i = 0, j;
+  unsigned int t_out[4], t_in[4];
+  for (i = 0; i < Dlen_inblocks - 1; i++)
+  {
+    PHOTON_Permutation(State);
+    for (j = 0; j < 4; j++)
+    {
+      t_in[j] = Data_in [i * 4 + j];
+    }
+    rhoohrDEC(State, t_out, t_in, 4);
+    for (j = 0; j < 4; j++)
+    {
+      Data_out[j] = t_out[i * 4 + j];
+    }
+  }
+  PHOTON_Permutation(State);
+  for (j = 0; j < 4; j++)
+  {
+    t_in[j] = Data_in [i * 4 + j];
+  }
+  rhoohrDEC(State, t_out, t_in, 4);
+  for (j = 0; j < 4; j++)
+  {
+    Data_out[j] = t_out[i * 4 + j];
+  }
+  XOR_const(State, Constant);
+}
+static void TAG(
+    unsigned int Tag_out[4],
+    unsigned int State[8])
+{
+  unsigned int i;
+  PHOTON_Permutation(State);
+  for (i = 0; i < 4; i++)
+  {
+    Tag_out[i] = State[i];
+  }
+}
+static void rearrange_bytes(unsigned int *bytes, unsigned int len){
+  unsigned int i;
+  unsigned int b0, b1, b2, b3;
+  for (i = 0; i < len; i++){
+    b0 = (bytes[i] >> 24) & 0xff;
+    b1 = (bytes[i] >> 16) & 0xff;
+    b2 = (bytes[i] >> 8 ) & 0xff;
+    b3 = (bytes[i] ) & 0xff;
+    bytes[i] = 0;
+    bytes[i] |= (b3 << 24);
+    bytes[i] |= (b2 << 16);
+    bytes[i] |= (b1 << 8 );
+    bytes[i] |= (b0 );
+  }
+}
+unsigned int crypto_aead_encrypt_struc(
+          unsigned int *c,
+    const unsigned int *m,
+    const unsigned int *ad,
+    const unsigned int *npub,
+    const unsigned int *k)
+{
+  unsigned int M[4], C[4], A[4], N[4], K[4];
+  unsigned int Tag[4];
+  unsigned int i;
+  for (i = 0; i < 4; i++) M[i] = m[i];
+  for (i = 0; i < 4; i++) A[i] = ad[i];
+  for (i = 0; i < 4; i++) N[i] = npub[i];
+  for (i = 0; i < 4; i++) K[i] = k[i];
+  rearrange_bytes(M, 4);
+  rearrange_bytes(A, 4);
+  rearrange_bytes(N, 4);
+  rearrange_bytes(K, 4);
+  unsigned int c0;
+  unsigned int c1;
+  unsigned int State[8];
+  for (i = 0; i < 4; i++) State[i] = N[i];
+  for (i = 0; i < 4; i++) State[i + 4] = K[i];
+  c0 = 1;
+  c1 = 1;
+  HASH(State, A, 4, c0);
+  ENC(State, C, M, 4, c1);
+  TAG(Tag, State);
+  rearrange_bytes(C, 4);
+  rearrange_bytes(Tag, 4);
+  for (i = 0; i < 4; i++) c[i] = C[i];
+  for (i = 0; i < 4; i++) c[i + 4] = Tag[i];
+  return 0;
+}

@@ -1,0 +1,17 @@
+# Temporary files
+*~
+.DS_Store
+.vscode/
+
+# C objects files / binaries
+*.o
+*.out
+
+# Python Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+compiler/schwaemm/build/*
+
+*.txt
+*.dat

@@ -1,0 +1,4 @@
+MAIN=sc25519_add_struc
+INPUT_COUNT=96
+INPUT_TYPES=unsigned int[32]+,unsigned int[32],unsigned int[32]
+OUTPUT_COUNT=33
